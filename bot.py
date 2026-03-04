@@ -72,7 +72,8 @@ SERVER_VPN_IP: str = CFG.get("server_vpn_ip", "10.66.66.1")
 DNS: str        = CFG.get("dns", "1.1.1.1")
 
 def get_junk_params() -> dict:
-    params = {"Jc": "4", "Jmin": "40", "Jmax": "70", "S1": "0", "S2": "0",
+    params = {"Jc": "4", "Jmin": "40", "Jmax": "70",
+              "S1": "0", "S2": "0",
               "H1": "4665", "H2": "19774", "H3": "17391", "H4": "14857"}
     try:
         conf = AWG_CONF.read_text()
@@ -228,9 +229,15 @@ def make_client_conf(name: str, privkey: str, psk: str, client_ip: str) -> str:
         f"PrivateKey = {privkey}\n"
         f"Address = {client_ip}/24\n"
         f"DNS = {DNS}\n"
-        f"Jc={jp['Jc']} Jmin={jp['Jmin']} Jmax={jp['Jmax']} "
-        f"S1={jp['S1']} S2={jp['S2']}\n"
-        f"H1={jp['H1']} H2={jp['H2']} H3={jp['H3']} H4={jp['H4']}\n\n"
+        f"Jc = {jp['Jc']}\n"
+        f"Jmin = {jp['Jmin']}\n"
+        f"Jmax = {jp['Jmax']}\n"
+        f"S1 = {jp['S1']}\n"
+        f"S2 = {jp['S2']}\n"
+        f"H1 = {jp['H1']}\n"
+        f"H2 = {jp['H2']}\n"
+        f"H3 = {jp['H3']}\n"
+        f"H4 = {jp['H4']}\n\n"
         f"[Peer]\n"
         f"PublicKey = {server_pubkey}\n"
         f"PresharedKey = {psk}\n"
@@ -497,10 +504,24 @@ def build_peer_detail(name: str, info: dict, stats: dict) -> str:
 
 # ─── /start  ──────────────────────────────────────────────────────────────────
 
+async def safe_edit(query, text: str, **kwargs):
+    """edit_message_text с fallback на reply_text при фото/документе."""
+    try:
+        await query.edit_message_text(text, **kwargs)
+    except Exception as e:
+        err = str(e).lower()
+        if "no text" in err or "message can't be edited" in err or "there is no text" in err:
+            await query.message.reply_text(text, **kwargs)
+        else:
+            raise
+
 async def show_main_menu(message: Message, edit: bool = False):
     text = "🛡 *AmneziaWG Bot*\nВыбери действие:"
     if edit:
-        await message.edit_text(text, parse_mode="Markdown", reply_markup=main_menu_kb())
+        try:
+            await message.edit_text(text, parse_mode="Markdown", reply_markup=main_menu_kb())
+        except Exception:
+            await message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu_kb())
     else:
         await message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu_kb())
 
@@ -520,7 +541,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if not is_admin(update):
-        await query.edit_message_text("⛔ Нет доступа.")
+        await safe_edit(query, "⛔ Нет доступа.")
         return
 
     # ── back ──────────────────────────────────────────────────────────────────
@@ -532,7 +553,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "back:peers":
         peers    = load_peers()
         awg_data = parse_awg_show()
-        await query.edit_message_text(
+        await safe_edit(query, 
             build_peers_text(peers, awg_data),
             parse_mode="Markdown",
             reply_markup=peers_list_kb(peers),
@@ -541,7 +562,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── status ────────────────────────────────────────────────────────────────
     if data == "menu:status":
-        await query.edit_message_text(
+        await safe_edit(query, 
             build_status_text(), parse_mode="Markdown", reply_markup=status_kb()
         )
         return
@@ -550,7 +571,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "menu:peers":
         peers    = load_peers()
         awg_data = parse_awg_show()
-        await query.edit_message_text(
+        await safe_edit(query, 
             build_peers_text(peers, awg_data),
             parse_mode="Markdown",
             reply_markup=peers_list_kb(peers),
@@ -560,7 +581,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── add ───────────────────────────────────────────────────────────────────
     if data == "menu:add":
         ctx.user_data["waiting_add"] = True
-        await query.edit_message_text(
+        await safe_edit(query, 
             "✏️ *Введи имя нового клиента:*\n\nМожно написать @никнейм или просто имя.",
             parse_mode="Markdown",
             reply_markup=cancel_add_kb(),
@@ -593,14 +614,14 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             text  = "📋 *Audit log (последние 30 записей):*\n\n```\n" + "\n".join(last) + "\n```"
         except FileNotFoundError:
             text = "📋 Audit log пуст."
-        await query.edit_message_text(
+        await safe_edit(query, 
             text, parse_mode="Markdown", reply_markup=back_menu_kb()
         )
         return
 
     # ── restart ───────────────────────────────────────────────────────────────
     if data == "menu:restart":
-        await query.edit_message_text(
+        await safe_edit(query, 
             f"⚠️ Перезапустить `{INTERFACE}`?\nVPN клиенты отключатся на ~5 сек.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[
@@ -612,17 +633,17 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "restart:confirm":
         audit(user_id, "restart", INTERFACE)
-        await query.edit_message_text("⏳ Перезапускаю...")
+        await safe_edit(query, "⏳ Перезапускаю...")
         run(f"awg-quick down {INTERFACE}")
         await asyncio.sleep(2)
         code, out = run(f"awg-quick up {INTERFACE}")
         if code == 0:
-            await query.edit_message_text(
+            await safe_edit(query, 
                 f"✅ `{INTERFACE}` перезапущен.", parse_mode="Markdown",
                 reply_markup=back_menu_kb()
             )
         else:
-            await query.edit_message_text(
+            await safe_edit(query, 
                 f"❌ Ошибка:\n```{out[:300]}```", parse_mode="Markdown",
                 reply_markup=back_menu_kb()
             )
@@ -634,7 +655,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         peers    = load_peers()
         awg_data = parse_awg_show()
         if name not in peers:
-            await query.edit_message_text("❌ Клиент не найден.", reply_markup=back_menu_kb())
+            await safe_edit(query, "❌ Клиент не найден.", reply_markup=back_menu_kb())
             return
         info     = peers[name]
         stats    = awg_data.get(info["pubkey"], {})
@@ -642,7 +663,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         expires  = info.get("expires")
         expired  = expires and datetime.fromisoformat(expires) < datetime.now()
         disabled = allowed == "0.0.0.0/32" or bool(expired)
-        await query.edit_message_text(
+        await safe_edit(query, 
             build_peer_detail(name, info, stats),
             parse_mode="Markdown",
             reply_markup=peer_actions_kb(name, disabled),
@@ -720,7 +741,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
 
         fresh = parse_awg_show().get(pubkey, {})
-        await query.edit_message_text(
+        await safe_edit(query, 
             build_peer_detail(name, info, fresh),
             parse_mode="Markdown",
             reply_markup=peer_actions_kb(name, new_disabled),
@@ -736,7 +757,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ Клиент не найден", show_alert=True)
             return
         expires = peers[name].get("expires")
-        await query.edit_message_text(
+        await safe_edit(query, 
             f"⏱ *Срок доступа: {name}*\n\nСейчас: {fmt_expires(expires)}\n\nВыбери новый срок:",
             parse_mode="Markdown",
             reply_markup=expire_kb(name),
@@ -772,7 +793,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         fresh   = parse_awg_show().get(pubkey, {})
         allowed = fresh.get("allowed_ips", "")
-        await query.edit_message_text(
+        await safe_edit(query, 
             build_peer_detail(name, peers[name], fresh),
             parse_mode="Markdown",
             reply_markup=peer_actions_kb(name, allowed == "0.0.0.0/32"),
@@ -783,7 +804,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── peer:rotate ───────────────────────────────────────────────────────────
     if data.startswith("peer:rotate:"):
         name = data[len("peer:rotate:"):]
-        await query.edit_message_text(
+        await safe_edit(query, 
             f"🔑 *Ротация ключей: {name}*\n\nСтарые ключи будут удалены. Клиенту нужен новый конфиг.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[
@@ -797,9 +818,9 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         name  = data[len("rotate:confirm:"):]
         peers = load_peers()
         if name not in peers:
-            await query.edit_message_text("❌ Клиент не найден.", reply_markup=back_menu_kb())
+            await safe_edit(query, "❌ Клиент не найден.", reply_markup=back_menu_kb())
             return
-        await query.edit_message_text(f"⏳ Обновляю ключи *{name}*...", parse_mode="Markdown")
+        await safe_edit(query, f"⏳ Обновляю ключи *{name}*...", parse_mode="Markdown")
         audit(user_id, "rotate_keys", name)
         try:
             old_pubkey = peers[name]["pubkey"]
@@ -808,14 +829,14 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             privkey, pubkey, psk = gen_keys()
             ok = add_peer_to_awg(pubkey, psk, ip)
             if not ok:
-                await query.edit_message_text("❌ Ошибка.", reply_markup=back_menu_kb())
+                await safe_edit(query, "❌ Ошибка.", reply_markup=back_menu_kb())
                 return
             peers[name].update({"pubkey": pubkey, "privkey": privkey, "psk": psk})
             save_peers(peers)
             conf_text = make_client_conf(name, privkey, psk, ip)
             conf_path = CLIENTS_DIR / f"{name}.conf"
             conf_path.write_text(conf_text)
-            await query.edit_message_text(
+            await safe_edit(query, 
                 f"✅ Ключи *{name}* обновлены · `{ip}`", parse_mode="Markdown"
             )
             await query.message.reply_document(
@@ -832,13 +853,13 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception as e:
             log.exception("rotate error")
-            await query.edit_message_text(f"❌ Ошибка: {e}", reply_markup=back_menu_kb())
+            await safe_edit(query, f"❌ Ошибка: {e}", reply_markup=back_menu_kb())
         return
 
     # ── peer:remove ───────────────────────────────────────────────────────────
     if data.startswith("peer:remove:"):
         name = data[len("peer:remove:"):]
-        await query.edit_message_text(
+        await safe_edit(query, 
             f"⚠️ *Удалить клиента {name}?*\nОтменить нельзя.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[
@@ -852,7 +873,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         name  = data[len("remove:confirm:"):]
         peers = load_peers()
         if name not in peers:
-            await query.edit_message_text("❌ Клиент не найден.", reply_markup=back_menu_kb())
+            await safe_edit(query, "❌ Клиент не найден.", reply_markup=back_menu_kb())
             return
         audit(user_id, "remove_peer", name)
         pubkey    = peers[name]["pubkey"]
@@ -862,7 +883,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             conf_path.unlink()
         del peers[name]
         save_peers(peers)
-        await query.edit_message_text(
+        await safe_edit(query, 
             f"{'✅' if ok else '⚠️'} Клиент *{name}* удалён.",
             parse_mode="Markdown", reply_markup=back_menu_kb()
         )
